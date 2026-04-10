@@ -10,6 +10,7 @@ import { pruneGatewaySessionsOlderThan, getAgentLiveStatuses } from './sessions'
 import { eventBus } from './event-bus'
 import { syncSkillsFromDisk } from './skill-sync'
 import { syncLocalAgents } from './local-agent-sync'
+import { syncAgentZeroA2A } from './agent-zero-sync'
 import { dispatchAssignedTasks, runAegisReviews, requeueStaleTasks, autoRouteInboxTasks } from './task-dispatch'
 import { spawnRecurringTasks } from './recurring-tasks'
 
@@ -283,6 +284,9 @@ export function initScheduler() {
   syncAgentsFromConfig('startup').catch(err => {
     logger.warn({ err }, 'Agent auto-sync failed')
   })
+  syncAgentZeroA2A().catch(err => {
+    logger.warn({ err }, 'Agent Zero auto-sync failed')
+  })
 
   // Register tasks
   const now = Date.now()
@@ -358,6 +362,15 @@ export function initScheduler() {
     intervalMs: TICK_MS, // Every 60s — re-read openclaw.json
     lastRun: null,
     nextRun: now + 20_000, // First scan 20s after startup (after local sync)
+    enabled: true,
+    running: false,
+  })
+  
+  tasks.set('agent_zero_sync', {
+    name: 'Agent Zero Sync',
+    intervalMs: TICK_MS,
+    lastRun: null,
+    nextRun: now + 12_000, // First scan 12s after startup
     enabled: true,
     running: false,
   })
@@ -445,10 +458,8 @@ async function tick() {
         : id === 'claude_session_scan' ? await syncClaudeSessions()
         : id === 'skill_sync' ? await syncSkillsFromDisk()
         : id === 'local_agent_sync' ? await syncLocalAgents()
-        : id === 'gateway_agent_sync' ? await syncAgentsFromConfig('scheduled').then(async r => {
-            const refreshed = await syncAgentLiveStatuses()
-            return { ok: true, message: `Gateway sync: ${r.created} created, ${r.updated} updated, ${r.synced} total | Live status: ${refreshed} refreshed` }
           })
+        : id === 'agent_zero_sync' ? await syncAgentZeroA2A()
         : id === 'task_dispatch' ? await autoRouteInboxTasks().then(async (routeResult) => {
             const dispatchResult = await dispatchAssignedTasks()
             const parts = [routeResult.message, dispatchResult.message].filter(m => m && !m.includes('No '))
@@ -518,6 +529,7 @@ export async function triggerTask(taskId: string): Promise<{ ok: boolean; messag
   if (taskId === 'claude_session_scan') return syncClaudeSessions()
   if (taskId === 'skill_sync') return syncSkillsFromDisk()
   if (taskId === 'local_agent_sync') return syncLocalAgents()
+  if (taskId === 'agent_zero_sync') return syncAgentZeroA2A()
   if (taskId === 'gateway_agent_sync') return syncAgentsFromConfig('manual').then(r => ({ ok: true, message: `Gateway sync: ${r.created} created, ${r.updated} updated, ${r.synced} total` }))
   if (taskId === 'task_dispatch') return autoRouteInboxTasks().then(async (r) => { const d = await dispatchAssignedTasks(); return { ok: r.ok && d.ok, message: [r.message, d.message].filter(m => m && !m.includes('No ')).join(' | ') || 'No tasks' } })
   if (taskId === 'aegis_review') return runAegisReviews()

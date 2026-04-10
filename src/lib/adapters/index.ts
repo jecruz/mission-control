@@ -1,9 +1,5 @@
-import { OpenClawAdapter } from './openclaw'
-import { GenericAdapter } from './generic'
-import { CrewAIAdapter } from './crewai'
-import { LangGraphAdapter } from './langgraph'
-import { AutoGenAdapter } from './autogen'
 import { ClaudeSdkAdapter } from './claude-sdk'
+import { AgentZeroAdapter } from './agent-zero'
 import type { FrameworkAdapter } from './adapter'
 
 const adapters: Record<string, () => FrameworkAdapter> = {
@@ -13,6 +9,7 @@ const adapters: Record<string, () => FrameworkAdapter> = {
   langgraph: () => new LangGraphAdapter(),
   autogen: () => new AutoGenAdapter(),
   'claude-sdk': () => new ClaudeSdkAdapter(),
+  'agent-zero': () => new AgentZeroAdapter(),
 }
 
 export function getAdapter(framework: string): FrameworkAdapter {
