@@ -1,6 +1,7 @@
 import { getDatabase, db_helpers } from './db'
 import { runOpenClaw } from './command'
 import { callOpenClawGateway } from './openclaw-gateway'
+import { sendTaskToAgentZero } from './agent-zero-dispatch'
 import { eventBus } from './event-bus'
 import { logger } from './logger'
 import { config } from './config'
@@ -32,6 +33,8 @@ interface DispatchableTask {
   agent_name: string
   agent_id: number
   agent_config: string | null
+  agent_framework: string | null
+  agent_source: string | null
   ticket_prefix: string | null
   project_ticket_no: number | null
   project_id: number | null
@@ -452,7 +455,8 @@ export async function runAegisReviews(): Promise<{ ok: boolean; message: string 
           id: task.id, title: task.title, description: task.description,
           status: 'quality_review', priority: 'high', assigned_to: 'aegis',
           workspace_id: task.workspace_id, agent_name: 'aegis', agent_id: 0,
-          agent_config: null, ticket_prefix: task.ticket_prefix,
+          agent_config: null, agent_framework: null, agent_source: null,
+          ticket_prefix: task.ticket_prefix,
           project_ticket_no: task.project_ticket_no, project_id: null,
         }
         agentResponse = await callClaudeDirectly(reviewTask, prompt)
@@ -668,6 +672,7 @@ export async function dispatchAssignedTasks(): Promise<{ ok: boolean; message: s
 
   const tasks = db.prepare(`
     SELECT t.*, a.name as agent_name, a.id as agent_id, a.config as agent_config,
+           a.framework as agent_framework, a.source as agent_source,
            p.ticket_prefix, t.project_ticket_no
     FROM tasks t
     JOIN agents a ON a.name = t.assigned_to AND a.workspace_id = t.workspace_id
@@ -739,8 +744,17 @@ export async function dispatchAssignedTasks(): Promise<{ ok: boolean; message: s
 
       let agentResponse: AgentResponseParsed
       const useDirectApi = !isGatewayAvailable() && getAnthropicApiKey()
+      const isAgentZero = task.agent_framework === 'agent-zero' && task.agent_source
 
-      if (useDirectApi && !targetSession) {
+      if (isAgentZero) {
+        // Agent Zero dispatch — fire-and-forget via native REST API
+        logger.info({ taskId: task.id, agent: task.agent_name, endpoint: task.agent_source }, 'Dispatching task to Agent Zero')
+        const result = await sendTaskToAgentZero(task.agent_source!, prompt)
+        agentResponse = {
+          text: `Task dispatched to Agent Zero (context: ${result.contextId}). ${result.message}`,
+          sessionId: result.contextId,
+        }
+      } else if (useDirectApi && !targetSession) {
         // Direct Claude API dispatch — no gateway needed
         agentResponse = await callClaudeDirectly(task, prompt)
       } else if (targetSession) {
