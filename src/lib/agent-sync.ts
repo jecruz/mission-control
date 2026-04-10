@@ -246,8 +246,8 @@ export async function syncAgentsFromConfig(actor: string = 'system'): Promise<Sy
 
   const findByName = db.prepare('SELECT id, name, role, config, soul_content FROM agents WHERE name = ?')
   const insertAgent = db.prepare(`
-    INSERT INTO agents (name, role, soul_content, status, created_at, updated_at, config)
-    VALUES (?, ?, ?, 'offline', ?, ?, ?)
+    INSERT INTO agents (name, role, soul_content, status, framework, created_at, updated_at, config)
+    VALUES (?, ?, ?, 'offline', 'openclaw', ?, ?, ?)
   `)
   const updateAgent = db.prepare(`
     UPDATE agents SET role = ?, config = ?, soul_content = ?, updated_at = ? WHERE name = ?

@@ -1416,6 +1416,18 @@ const migrations: Migration[] = [
     up(db: Database.Database) {
       db.exec(`ALTER TABLE agents ADD COLUMN runtime_type TEXT DEFAULT NULL`)
     }
+  },
+  {
+    id: '050_agent_framework',
+    up(db: Database.Database) {
+      const cols = db.prepare(`PRAGMA table_info(agents)`).all() as Array<{ name: string }>
+      if (!cols.some(c => c.name === 'framework')) {
+        db.exec(`ALTER TABLE agents ADD COLUMN framework TEXT DEFAULT 'openclaw'`)
+      }
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_agents_framework ON agents(framework)`)
+      // Backfill existing local/manual agents to openclaw
+      db.exec(`UPDATE agents SET framework = 'openclaw' WHERE framework IS NULL OR framework = ''`)
+    }
   }
 ]
 
