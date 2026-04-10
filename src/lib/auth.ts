@@ -3,6 +3,7 @@ import { getDatabase } from './db'
 import { hashPassword, verifyPassword, verifyPasswordWithRehashCheck } from './password'
 import { logSecurityEvent } from './security-events'
 import { parseMcSessionCookieHeader } from './session-cookie'
+import { logger } from './logger'
 
 // Trusted IPs for proxy auth header (comma-separated)
 const PROXY_AUTH_TRUSTED_IPS = new Set(
@@ -437,12 +438,21 @@ export function getUserFromRequest(request: Request): User | null {
         }
       }
     } else {
-      // No trusted IPs configured — log warning and still allow (backward compat)
-      const proxyUsername = (request.headers.get(proxyAuthHeader) || '').trim()
-      if (proxyUsername) {
-        const user = resolveOrProvisionProxyUser(proxyUsername)
-        if (user) return { ...user, agent_name: agentName }
-      }
+      // SECURITY: MC_PROXY_AUTH_TRUSTED_IPS is NOT configured.
+      // To prevent impersonation via header spoofing, we REJECT the proxy auth header.
+      // Users must explicitly set trusted IPs to enable this feature securely.
+      try {
+        logSecurityEvent({
+          event_type: 'auth_failure',
+          severity: 'critical',
+          source: 'auth',
+          detail: JSON.stringify({ reason: 'proxy_auth_untrusted_header_ignored', header: proxyAuthHeader }),
+          workspace_id: 1,
+          tenant_id: 1
+        })
+      } catch {}
+      logger.warn({ header: proxyAuthHeader }, 'Rejected proxy auth: MC_PROXY_AUTH_TRUSTED_IPS not configured')
+      return null
     }
   }
 

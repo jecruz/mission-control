@@ -8,9 +8,9 @@ SCORE=0
 MAX_SCORE=0
 ISSUES=()
 
-pass() { echo "  [PASS] $1"; ((SCORE++)); ((MAX_SCORE++)); }
-fail() { echo "  [FAIL] $1"; ISSUES+=("$1"); ((MAX_SCORE++)); }
-warn() { echo "  [WARN] $1"; ((MAX_SCORE++)); }
+pass() { echo "  [PASS] $1"; ((SCORE++)) || true; ((MAX_SCORE++)) || true; }
+fail() { echo "  [FAIL] $1"; ISSUES+=("$1"); ((MAX_SCORE++)) || true; }
+warn() { echo "  [WARN] $1"; ((MAX_SCORE++)) || true; }
 info() { echo "  [INFO] $1"; }
 
 # Load .env if exists
