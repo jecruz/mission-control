@@ -1428,6 +1428,21 @@ const migrations: Migration[] = [
       // Backfill existing local/manual agents to openclaw
       db.exec(`UPDATE agents SET framework = 'openclaw' WHERE framework IS NULL OR framework = ''`)
     }
+  },
+  {
+    id: '051_ai_providers',
+    up(db: Database.Database) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS ai_providers (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL UNIQUE,
+          base_url TEXT NOT NULL,
+          api_key TEXT,
+          default_model TEXT,
+          created_at INTEGER NOT NULL DEFAULT (unixepoch())
+        );
+      `)
+    }
   }
 ]
 

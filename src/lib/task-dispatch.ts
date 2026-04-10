@@ -339,6 +339,67 @@ async function callClaudeDirectly(
   return { text, sessionId: null }
 }
 
+async function callGenericAiProvider(
+  task: DispatchableTask,
+  prompt: string,
+  provider: { base_url: string; api_key: string | null; default_model: string | null }
+): Promise<AgentResponseParsed> {
+  let model = provider.default_model || 'default-model'
+  if (task.agent_config) {
+    try {
+      const cfg = JSON.parse(task.agent_config)
+      if (typeof cfg.dispatchModel === 'string' && cfg.dispatchModel) {
+        model = cfg.dispatchModel.replace(/^.*\//, '')
+      }
+    } catch { /* ignore */ }
+  }
+
+  const soul = getAgentSoulContent(task)
+  const messages: Array<{ role: string; content: string }> = []
+  
+  if (soul) {
+    messages.push({ role: 'system', content: soul })
+  }
+  messages.push({ role: 'user', content: prompt })
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  }
+  if (provider.api_key) {
+    headers['Authorization'] = `Bearer ${provider.api_key}`
+  }
+
+  // Handle URL formation smoothly, typically appending /v1/chat/completions if missing
+  let url = provider.base_url.replace(/\/+$/, '')
+  if (!url.endsWith('/chat/completions')) {
+    if (!url.endsWith('/v1')) url += '/v1'
+    url += '/chat/completions'
+  }
+
+  logger.info({ taskId: task.id, model, agent: task.agent_name, url }, 'Dispatching task via generic AI provider')
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature: 0.7,
+    }),
+  })
+
+  if (!res.ok) {
+    const errorBody = await res.text().catch(() => '')
+    throw new Error(`AI Provider API ${res.status}: ${errorBody.substring(0, 500)}`)
+  }
+
+  const data = await res.json() as any
+  const text = data.choices?.[0]?.message?.content || null
+
+  return { text, sessionId: null }
+}
+
+
 interface ReviewableTask {
   id: number
   title: string
@@ -459,7 +520,22 @@ export async function runAegisReviews(): Promise<{ ok: boolean; message: string 
           ticket_prefix: task.ticket_prefix,
           project_ticket_no: task.project_ticket_no, project_id: null,
         }
-        agentResponse = await callClaudeDirectly(reviewTask, prompt)
+        
+        let customProvider = null
+        if (task.agent_config) {
+          try {
+            const cfg = JSON.parse(task.agent_config)
+            if (cfg.providerName) {
+              customProvider = db.prepare('SELECT * FROM ai_providers WHERE name = ?').get(cfg.providerName) as any
+            }
+          } catch { /* ignore */ }
+        }
+
+        if (customProvider) {
+           agentResponse = await callGenericAiProvider(reviewTask, prompt, customProvider)
+        } else {
+           agentResponse = await callClaudeDirectly(reviewTask, prompt)
+        }
       } else {
         // Resolve the gateway agent ID from config, falling back to assigned_to or default
         const reviewAgent = resolveGatewayAgentIdForReview(task)
@@ -743,8 +819,18 @@ export async function dispatchAssignedTasks(): Promise<{ ok: boolean; message: s
         : null
 
       let agentResponse: AgentResponseParsed
-      const useDirectApi = !isGatewayAvailable() && getAnthropicApiKey()
       const isAgentZero = task.agent_framework === 'agent-zero' && task.agent_source
+
+      // Check if a specific AI provider is configured for this agent
+      let customProvider = null
+      if (task.agent_config) {
+        try {
+          const cfg = JSON.parse(task.agent_config)
+          if (cfg.providerName) {
+            customProvider = db.prepare('SELECT * FROM ai_providers WHERE name = ?').get(cfg.providerName) as any
+          }
+        } catch { /* ignore */ }
+      }
 
       if (isAgentZero) {
         // Agent Zero dispatch — fire-and-forget via native REST API
@@ -754,7 +840,10 @@ export async function dispatchAssignedTasks(): Promise<{ ok: boolean; message: s
           text: `Task dispatched to Agent Zero (context: ${result.contextId}). ${result.message}`,
           sessionId: result.contextId,
         }
-      } else if (useDirectApi && !targetSession) {
+      } else if (customProvider && !targetSession) {
+        // Direct generic provider dispatch (LM Studio, llama.cpp, Minimax, etc)
+        agentResponse = await callGenericAiProvider(task, prompt, customProvider)
+      } else if (!isGatewayAvailable() && getAnthropicApiKey() && !targetSession) {
         // Direct Claude API dispatch — no gateway needed
         agentResponse = await callClaudeDirectly(task, prompt)
       } else if (targetSession) {
