@@ -40,8 +40,8 @@ export function getMcSessionCookieOptions(input: { maxAgeSeconds: number; isSecu
 
   return {
     httpOnly: true,
-    secure,
-    sameSite: 'strict',
+    secure: !!secure,
+    sameSite: 'lax',
     maxAge: input.maxAgeSeconds,
     path: '/',
   }
