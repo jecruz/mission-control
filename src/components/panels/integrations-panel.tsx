@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslations } from 'next-intl'
 import { Button } from '@/components/ui/button'
+import { AiProvidersList } from '@/components/integrations/ai-providers-list'
 
 interface EnvVarInfo {
   redacted: string
@@ -427,6 +428,8 @@ export function IntegrationsPanel() {
           </div>
         </div>
       )}
+      
+      {activeCategory === 'ai' && <AiProvidersList />}
     </div>
   )
 }
