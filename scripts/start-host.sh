@@ -33,4 +33,4 @@ echo "📍 Data Directory: $MISSION_CONTROL_DATA_DIR"
 echo "📍 Server path: $SERVER_JS"
 
 # Run the server
-PORT=$PORT exec node "$SERVER_JS"
+PORT=$PORT exec node --max-http-header-size=65536 "$SERVER_JS"
