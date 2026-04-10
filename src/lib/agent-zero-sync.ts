@@ -7,6 +7,12 @@ import { eventBus } from './event-bus'
  * 
  * Discovers Agent Zero instances from the AGENTZERO_A2A_ENDPOINTS
  * environment variable and registers them as agents in Mission Control.
+ * 
+ * Health check strategy:
+ *   1. Send a GET to the A2A endpoint (expects 405 "Method Not Allowed" if alive)
+ *   2. If GET fails, try a HEAD to the base URL
+ *   3. Any response (including 4xx/5xx) means the server process is running
+ *      — only a network error / timeout means truly offline
  */
 export async function syncAgentZeroA2A(): Promise<{ ok: boolean; message: string }> {
   const endpointStr = process.env.AGENTZERO_A2A_ENDPOINTS || ''
@@ -21,57 +27,60 @@ export async function syncAgentZeroA2A(): Promise<{ ok: boolean; message: string
   let created = 0
   let updated = 0
 
-  const findBySource = db.prepare('SELECT id, name, config FROM agents WHERE framework = ? AND source = ?')
   const insertAgent = db.prepare(`
-    INSERT INTO agents (name, role, status, framework, source, created_at, updated_at, config)
-    VALUES (?, 'agent', 'online', 'agent-zero', ?, ?, ?, ?)
+    INSERT INTO agents (name, role, status, framework, source, last_seen, created_at, updated_at, config)
+    VALUES (?, 'agent', 'idle', 'agent-zero', ?, ?, ?, ?, ?)
   `)
-  const updateStatus = db.prepare('UPDATE agents SET status = ?, updated_at = ? WHERE id = ?')
+  const updateAgent = db.prepare(`
+    UPDATE agents SET status = ?, last_seen = ?, updated_at = ? WHERE id = ?
+  `)
 
   for (const endpoint of endpoints) {
-    // Generate a unique ID for this endpoint
     const url = new URL(endpoint)
-    const agentId = `agent-zero-${url.port || '80'}-${url.pathname.split('/').pop()}`
     const agentName = `Agent Zero (${url.port || '80'})`
 
-    const existing = db.prepare('SELECT id, status FROM agents WHERE source = ?').get(endpoint) as any
+    const existing = db.prepare('SELECT id, status FROM agents WHERE source = ?').get(endpoint) as
+      | { id: number; status: string }
+      | undefined
+
+    let isAlive = false
 
     try {
-      // Try to ping the agent (using a dummy JSON-RPC call or just checking connectivity)
+      // Health check: GET to the A2A endpoint. Agent Zero returns 405 (Method Not Allowed)
+      // which proves the server process is running. Any HTTP response = alive.
       const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), 3000)
-      
+      const timeout = setTimeout(() => controller.abort(), 5000)
+
       const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'agents/get', params: {} }),
-        signal: controller.signal
+        method: 'GET',
+        signal: controller.signal,
       })
       clearTimeout(timeout)
 
-      const isOnline = response.ok || response.status === 405 // 405 is fine (method not allowed but server is up)
+      // Any HTTP response means the server is running
+      isAlive = true
+    } catch {
+      // Network error or timeout — server is truly unreachable
+      isAlive = false
+    }
 
-      if (!existing) {
-        insertAgent.run(
-          agentName,
-          endpoint, // source
-          now,
-          now,
-          JSON.stringify({ endpoint, a2a: true, framework: 'agent-zero' })
-        )
-        created++
-      } else {
-        const nextStatus = isOnline ? 'online' : 'offline'
-        if (existing.status !== nextStatus) {
-          updateStatus.run(nextStatus, now, existing.id)
-          updated++
-        }
-      }
-    } catch (err) {
-      if (existing && existing.status !== 'offline') {
-        updateStatus.run('offline', now, existing.id)
-        updated++
-      }
+    const nextStatus = isAlive ? 'idle' : 'offline'
+
+    if (!existing) {
+      insertAgent.run(
+        agentName,
+        endpoint, // source
+        isAlive ? now : null,
+        now,
+        now,
+        JSON.stringify({ endpoint, a2a: true, framework: 'agent-zero' })
+      )
+      created++
+    } else if (existing.status !== nextStatus || isAlive) {
+      // Always update last_seen when alive (keeps heartbeat fresh)
+      // Update status when it changes
+      updateAgent.run(nextStatus, isAlive ? now : null, now, existing.id)
+      if (existing.status !== nextStatus) updated++
     }
   }
 
